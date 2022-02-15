@@ -4,8 +4,8 @@ contents: |
   [Unit]
   Description=Kubernetes Kubelet
   Wants=rpc-statd.service network-online.target
-  Requires=crio.service kubelet-auto-node-size.service
-  After=network-online.target crio.service kubelet-auto-node-size.service
+  Requires=containerd.service kubelet-auto-node-size.service
+  After=network-online.target containerd.service kubelet-auto-node-size.service
   After=ostree-finalize-staged.service
 
   [Service]
@@ -24,8 +24,8 @@ contents: |
         --bootstrap-kubeconfig=/etc/kubernetes/kubeconfig \
         --kubeconfig=/var/lib/kubelet/kubeconfig \
         --container-runtime=remote \
-        --container-runtime-endpoint=/var/run/crio/crio.sock \
-        --runtime-cgroups=/system.slice/crio.service \
+        --container-runtime-endpoint=/var/run/containerd/containerd.sock \
+        --runtime-cgroups=/system.slice/containerd.service \
         --node-labels=node-role.kubernetes.io/master,node.openshift.io/os_id=${ID} \
 {{- if eq .IPFamilies "DualStack"}}
         --node-ip=${KUBELET_NODE_IPS} \
