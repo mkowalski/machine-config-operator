@@ -1929,7 +1929,7 @@ func (dn *Daemon) InplaceUpdateViaNewContainer(target string) error {
 	systemdPodmanArgs := []string{"--unit", "machine-config-daemon-update-rpmostree-via-container", "-p", "EnvironmentFile=-/etc/mco/proxy.env", "--collect", "--wait", "--", "podman"}
 	pullArgs := append([]string{}, systemdPodmanArgs...)
 	pullArgs = append(pullArgs, "pull", "--authfile", "/var/lib/kubelet/config.json", target)
-	err = runCmdSync("systemd-run", pullArgs...)
+	_, err = pivotutils.RunExt(numRetriesNetCommands, "systemd-run", pullArgs...)
 	if err != nil {
 		return err
 	}
