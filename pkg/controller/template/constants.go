@@ -27,6 +27,11 @@ const (
 	// reloader, metrics, status) in OpenShift.
 	FRRK8sKey string = "frrK8sImage"
 
+	// KubeVIPKey is the key for the kube-vip image used by the kube-vip static pods.
+	// kube-vip manages API and Ingress VIPs in Routing Table Mode for BGP-based
+	// VIP management.
+	KubeVIPKey string = "kubeVipImage"
+
 	// KubeRbacProxyKey the key that references the kubeRbacProxy image
 	KubeRbacProxyKey string = "kubeRbacProxyImage"
 
