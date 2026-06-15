@@ -154,25 +154,27 @@ func buildSpec(dependencies *BootstrapDependencies, imgs *ctrlcommon.Images, rel
 
 func appendManifestsByPlatform(manifests []manifest, infra *configv1.Infrastructure) []manifest {
 	lbType := configv1.LoadBalancerTypeOpenShiftManagedDefault
+	vipManagement := ""
 	if infra.Status.PlatformStatus.BareMetal != nil {
 		if infra.Status.PlatformStatus.BareMetal.LoadBalancer != nil {
 			lbType = infra.Status.PlatformStatus.BareMetal.LoadBalancer.Type
 		}
-		manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.BareMetalPlatformType)), lbType)
+		vipManagement = infra.Status.PlatformStatus.BareMetal.VIPManagement
+		manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.BareMetalPlatformType)), lbType, vipManagement)
 	}
 
 	if infra.Status.PlatformStatus.OpenStack != nil {
 		if infra.Status.PlatformStatus.OpenStack.LoadBalancer != nil {
 			lbType = infra.Status.PlatformStatus.OpenStack.LoadBalancer.Type
 		}
-		manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.OpenStackPlatformType)), lbType)
+		manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.OpenStackPlatformType)), lbType, "")
 	}
 
 	if infra.Status.PlatformStatus.Ovirt != nil {
 		if infra.Status.PlatformStatus.Ovirt.LoadBalancer != nil {
 			lbType = infra.Status.PlatformStatus.Ovirt.LoadBalancer.Type
 		}
-		manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.OvirtPlatformType)), lbType)
+		manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.OvirtPlatformType)), lbType, "")
 	}
 
 	if infra.Status.PlatformStatus.VSphere != nil {
@@ -189,14 +191,14 @@ func appendManifestsByPlatform(manifests []manifest, infra *configv1.Infrastruct
 				return manifests
 			}
 		}
-		manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.VSpherePlatformType)), lbType)
+		manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.VSpherePlatformType)), lbType, "")
 	}
 
 	if infra.Status.PlatformStatus.Nutanix != nil {
 		if infra.Status.PlatformStatus.Nutanix.LoadBalancer != nil {
 			lbType = infra.Status.PlatformStatus.Nutanix.LoadBalancer.Type
 		}
-		manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.NutanixPlatformType)), lbType)
+		manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.NutanixPlatformType)), lbType, "")
 	}
 
 	if infra.Status.PlatformStatus.GCP != nil {
@@ -205,7 +207,7 @@ func appendManifestsByPlatform(manifests []manifest, infra *configv1.Infrastruct
 			// We do not need the keepalived manifests to be generated because the cloud default Load Balancers are in use.
 			// So, setting the lbType to `UserManaged` although the default cloud LBs are not user managed.
 			lbType = configv1.LoadBalancerTypeUserManaged
-			manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.GCPPlatformType)), lbType)
+			manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.GCPPlatformType)), lbType, "")
 		}
 	}
 	if infra.Status.PlatformStatus.AWS != nil {
@@ -214,7 +216,7 @@ func appendManifestsByPlatform(manifests []manifest, infra *configv1.Infrastruct
 			// We do not need the keepalived manifests to be generated because the cloud default Load Balancers are in use.
 			// So, setting the lbType to `UserManaged` although the default cloud LBs are not user managed.
 			lbType = configv1.LoadBalancerTypeUserManaged
-			manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.AWSPlatformType)), lbType)
+			manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.AWSPlatformType)), lbType, "")
 		}
 	}
 	if infra.Status.PlatformStatus.Azure != nil {
@@ -223,14 +225,14 @@ func appendManifestsByPlatform(manifests []manifest, infra *configv1.Infrastruct
 			// We do not need the keepalived manifests to be generated because the cloud default Load Balancers are in use.
 			// So, setting the lbType to `UserManaged` although the default cloud LBs are not user managed.
 			lbType = configv1.LoadBalancerTypeUserManaged
-			manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.AzurePlatformType)), lbType)
+			manifests = getPlatformManifests(manifests, strings.ToLower(string(configv1.AzurePlatformType)), lbType, "")
 		}
 	}
 
 	return manifests
 }
 
-func getPlatformManifests(manifests []manifest, platformName string, lbType configv1.PlatformLoadBalancerType) []manifest {
+func getPlatformManifests(manifests []manifest, platformName string, lbType configv1.PlatformLoadBalancerType, vipManagement string) []manifest {
 	var corednsName string
 	var corefileName string
 	switch platformName {
@@ -254,16 +256,26 @@ func getPlatformManifests(manifests []manifest, platformName string, lbType conf
 	)
 
 	if lbType == configv1.LoadBalancerTypeOpenShiftManagedDefault || lbType == "" {
-		platformManifests = append(platformManifests,
-			manifest{
-				name:     "manifests/on-prem/keepalived.yaml",
-				filename: platformName + "/manifests/keepalived.yaml",
-			},
-			manifest{
-				name:     "manifests/on-prem/keepalived.conf.tmpl",
-				filename: platformName + "/static-pod-resources/keepalived/keepalived.conf.tmpl",
-			},
-		)
+		if vipManagement == "BGP" {
+			platformManifests = append(platformManifests,
+				manifest{name: "manifests/on-prem/frr-k8s.yaml", filename: platformName + "/manifests/frr-k8s.yaml"},
+				manifest{name: "manifests/on-prem/frr.conf.tmpl", filename: platformName + "/static-pod-resources/frr-k8s/frr.conf.tmpl"},
+				manifest{name: "manifests/on-prem/frr-peers.json.tmpl", filename: platformName + "/static-pod-resources/frr-k8s/frr-peers.json"},
+				manifest{name: "manifests/on-prem/frr-startup-daemons", filename: platformName + "/static-pod-resources/frr-k8s/startup/daemons"},
+				manifest{name: "manifests/on-prem/frr-startup-vtysh.conf", filename: platformName + "/static-pod-resources/frr-k8s/startup/vtysh.conf"},
+			)
+		} else {
+			platformManifests = append(platformManifests,
+				manifest{
+					name:     "manifests/on-prem/keepalived.yaml",
+					filename: platformName + "/manifests/keepalived.yaml",
+				},
+				manifest{
+					name:     "manifests/on-prem/keepalived.conf.tmpl",
+					filename: platformName + "/static-pod-resources/keepalived/keepalived.conf.tmpl",
+				},
+			)
+		}
 	}
 
 	return append(manifests, platformManifests...)
