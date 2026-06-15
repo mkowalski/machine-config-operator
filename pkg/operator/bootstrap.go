@@ -258,7 +258,7 @@ func getPlatformManifests(manifests []manifest, platformName string, lbType conf
 	if lbType == configv1.LoadBalancerTypeOpenShiftManagedDefault || lbType == "" {
 		if vipManagement == "BGP" {
 			platformManifests = append(platformManifests,
-				manifest{name: "manifests/on-prem/frr-k8s.yaml", filename: platformName + "/manifests/frr-k8s.yaml"},
+				manifest{name: "manifests/on-prem/0000-frr-k8s.yaml", filename: platformName + "/manifests/0000-frr-k8s.yaml"},
 				manifest{name: "manifests/on-prem/frr.conf.tmpl", filename: platformName + "/static-pod-resources/frr-k8s/frr.conf.tmpl"},
 				manifest{name: "manifests/on-prem/frr-peers.json.tmpl", filename: platformName + "/static-pod-resources/frr-k8s/frr-peers.json"},
 				manifest{name: "manifests/on-prem/frr-startup-daemons", filename: platformName + "/static-pod-resources/frr-k8s/startup/daemons"},
