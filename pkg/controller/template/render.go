@@ -386,6 +386,7 @@ func renderTemplate(config RenderConfig, path string, b []byte) ([]byte, error) 
 	funcs["urlHost"] = urlHost
 	funcs["urlPort"] = urlPort
 	funcs["isOpenShiftManagedDefaultLB"] = isOpenShiftManagedDefaultLB
+	funcs["isBGPVIPManagement"] = isBGPVIPManagement
 	funcs["dnsRecordsType"] = dnsRecordsType
 	funcs["cloudPlatformAPIIntLoadBalancerIPs"] = cloudPlatformAPIIntLoadBalancerIPs
 	funcs["cloudPlatformAPILoadBalancerIPs"] = cloudPlatformAPILoadBalancerIPs
@@ -721,6 +722,29 @@ func isOpenShiftManagedDefaultLB(cfg RenderConfig) bool {
 		}
 	}
 	return false
+}
+
+// isBGPVIPManagement returns true when the cluster is configured to use
+// BGP-based VIP management instead of keepalived/VRRP. This controls
+// whether MCO renders frr-k8s static pod manifests (BGP) or keepalived
+// static pod manifests (default).
+func isBGPVIPManagement(cfg RenderConfig) bool {
+	if cfg.Infra == nil {
+		return false
+	}
+	ps := cfg.Infra.Status.PlatformStatus
+	if ps == nil {
+		return false
+	}
+	switch ps.Type {
+	case configv1.BareMetalPlatformType:
+		if ps.BareMetal == nil {
+			return false
+		}
+		return ps.BareMetal.VIPManagement == "BGP"
+	default:
+		return false
+	}
 }
 
 func dnsRecordsType(cfg RenderConfig) configv1.DNSRecordsType {
