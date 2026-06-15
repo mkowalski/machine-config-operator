@@ -22,6 +22,11 @@ const (
 	// BaremetalRuntimeCfgKey is the key that references the baremetal-runtimecfg image in the controller
 	BaremetalRuntimeCfgKey string = "baremetalRuntimeCfgImage"
 
+	// FRRK8sKey is the key for the frr-k8s image used by the frr-k8s static pod.
+	// A single image is used for all frr-k8s containers (controller, FRR daemon,
+	// reloader, metrics, status) in OpenShift.
+	FRRK8sKey string = "frrK8sImage"
+
 	// KubeRbacProxyKey the key that references the kubeRbacProxy image
 	KubeRbacProxyKey string = "kubeRbacProxyImage"
 
