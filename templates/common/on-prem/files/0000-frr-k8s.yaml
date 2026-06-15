@@ -1,5 +1,5 @@
 mode: 0644
-path: {{ if isBGPVIPManagement . }}"/etc/kubernetes/manifests/frr-k8s.yaml"{{ else }}"/etc/kubernetes/disabled-manifests/frr-k8s.yaml"{{ end }}
+path: {{ if isBGPVIPManagement . }}"/etc/kubernetes/manifests/0000-frr-k8s.yaml"{{ else }}"/etc/kubernetes/disabled-manifests/0000-frr-k8s.yaml"{{ end }}
 contents:
   inline: |
     ---

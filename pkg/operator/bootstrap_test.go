@@ -102,7 +102,7 @@ func TestGetPlatformManifests(t *testing.T) {
 				if m.name == "manifests/on-prem/keepalived.yaml" {
 					hasKeepalived = true
 				}
-				if m.name == "manifests/on-prem/frr-k8s.yaml" {
+				if m.name == "manifests/on-prem/0000-frr-k8s.yaml" {
 					hasFRRK8s = true
 				}
 				if m.name == "manifests/on-prem/coredns.yaml" || m.name == "manifests/cloud-platform-alt-dns/coredns.yaml" {
