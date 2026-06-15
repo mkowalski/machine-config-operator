@@ -263,6 +263,7 @@ func getPlatformManifests(manifests []manifest, platformName string, lbType conf
 				manifest{name: "manifests/on-prem/frr-peers.json.tmpl", filename: platformName + "/static-pod-resources/frr-k8s/frr-peers.json"},
 				manifest{name: "manifests/on-prem/frr-startup-daemons", filename: platformName + "/static-pod-resources/frr-k8s/startup/daemons"},
 				manifest{name: "manifests/on-prem/frr-startup-vtysh.conf", filename: platformName + "/static-pod-resources/frr-k8s/startup/vtysh.conf"},
+				manifest{name: "manifests/on-prem/0010-kube-vip-api.yaml", filename: platformName + "/manifests/0010-kube-vip-api.yaml"},
 			)
 		} else {
 			platformManifests = append(platformManifests,

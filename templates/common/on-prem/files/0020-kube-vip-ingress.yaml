@@ -1,0 +1,61 @@
+mode: 0644
+path: "/etc/kubernetes/disabled-manifests/0020-kube-vip-ingress.yaml"
+contents:
+  inline: |
+    ---
+    kind: Pod
+    apiVersion: v1
+    metadata:
+      name: kube-vip-ingress
+      namespace: openshift-kube-vip
+      labels:
+        app: kube-vip
+        component: ingress
+    spec:
+      hostNetwork: true
+      priorityClassName: system-node-critical
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: kube-vip
+        image: {{.Images.kubeVipImage}}
+        env:
+        - name: address
+          value: "{{ onPremPlatformIngressIP . }}"
+        - name: port
+          value: "443"
+        - name: cp_enable
+          value: "true"
+        - name: vip_leaderelection
+          value: "true"
+        - name: vip_routingtable
+          value: "true"
+        - name: vip_cleanroutingtable
+          value: "true"
+        - name: vip_routingtableid
+          value: "198"
+        - name: vip_routingtableprotocol
+          value: "248"
+        - name: backend_health_check_interval
+          value: "5"
+        - name: control_plane_health_check_address
+          value: "http://localhost:29445/healthz"
+        - name: control_plane_health_check_timeout_seconds
+          value: "3"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+            - NET_RAW
+        volumeMounts:
+        - name: kubeconfig
+          mountPath: /etc/kubernetes
+          readOnly: true
+      volumes:
+      - name: kubeconfig
+        hostPath:
+          path: /etc/kubernetes
