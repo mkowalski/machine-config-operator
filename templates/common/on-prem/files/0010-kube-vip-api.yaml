@@ -18,7 +18,7 @@ contents:
       - operator: Exists
       containers:
       - name: kube-vip
-        image: {{.Images.kubeVipImage}}
+        image: quay.io/mkowalski/kube-vip:latest
         env:
         - name: address
           value: "{{ onPremPlatformAPIServerInternalIP . }}"
