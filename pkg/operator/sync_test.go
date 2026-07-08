@@ -252,6 +252,12 @@ func TestSyncBGPVIPPeersJSON(t *testing.T) {
 			configMap:   buildBGPVIPConfigMap("{not json"),
 			expectError: true,
 		},
+		{
+			name:        "BGP enabled with empty config.json payload degrades",
+			infra:       buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP")),
+			configMap:   buildBGPVIPConfigMap(""),
+			expectError: true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

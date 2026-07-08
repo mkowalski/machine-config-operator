@@ -407,7 +407,11 @@ func (optr *Operator) syncBGPVIPPeersJSON(spec *mcfgv1.ControllerConfigSpec, inf
 		}
 		return fmt.Errorf("failed to read bgp-vip-config ConfigMap: %w", err)
 	}
-	peersJSON, err := compactBGPVIPPeersJSON(cm.Data["config.json"])
+	raw := cm.Data["config.json"]
+	if raw == "" {
+		return fmt.Errorf("BGP VIP management is enabled but the bgp-vip-config ConfigMap has no config.json payload")
+	}
+	peersJSON, err := compactBGPVIPPeersJSON(raw)
 	if err != nil {
 		return err
 	}
