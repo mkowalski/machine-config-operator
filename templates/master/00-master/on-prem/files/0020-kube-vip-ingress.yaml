@@ -19,6 +19,8 @@ contents:
       containers:
       - name: kube-vip
         image: {{.Images.kubeVipImage}}
+        args:
+        - manager
         env:
         - name: address
           value: "{{ onPremPlatformIngressIP . }}"

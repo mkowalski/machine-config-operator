@@ -24,6 +24,8 @@ spec:
     - {{ onPremPlatformAPIServerInternalIP .ControllerConfig }}
     - --ingress-vips
     - {{ onPremPlatformIngressIP .ControllerConfig }}
+    - "--cluster-config"
+    - "/opt/openshift/manifests/cluster-config.yaml"
     - /config/frr.conf.tmpl
     - --out-dir
     - /etc/frr
@@ -44,6 +46,9 @@ spec:
       mountPath: /etc/frr
     - name: kubeconfig
       mountPath: /etc/kubernetes
+    - name: manifests
+      mountPath: "/opt/openshift/manifests"
+      mountPropagation: HostToContainer
   - name: cp-frr-files
     image: {{ .Images.FRRK8sBootstrap }}
     command:
@@ -116,3 +121,6 @@ spec:
   - name: kubeconfig
     hostPath:
       path: /etc/kubernetes
+  - name: manifests
+    hostPath:
+      path: "/opt/openshift/manifests"
