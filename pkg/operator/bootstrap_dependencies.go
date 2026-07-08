@@ -296,6 +296,10 @@ func (b *BootstrapDependencies) fillBGPVIPConfig(path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read bgp-vip-config ConfigMap: %w", err)
 	}
-	b.BGPVIPPeersJSON = cm.Data["config.json"]
+	peersJSON, err := compactBGPVIPPeersJSON(cm.Data["config.json"])
+	if err != nil {
+		return err
+	}
+	b.BGPVIPPeersJSON = peersJSON
 	return nil
 }

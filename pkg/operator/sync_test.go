@@ -27,6 +27,7 @@ import (
 	fakemcopclientset "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	mcoplistersv1 "github.com/openshift/client-go/operator/listers/operator/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic/dynamiclister"
 )
@@ -176,6 +177,101 @@ func withCABundle(caBundle string) kubeCloudConfigOption {
 			kubeCloudConfig.Data = map[string]string{}
 		}
 		kubeCloudConfig.Data["ca-bundle.pem"] = caBundle
+	}
+}
+
+func withBareMetalVIPManagement(vipManagement string) infraOption {
+	return func(infra *configv1.Infrastructure) {
+		if infra.Status.PlatformStatus == nil {
+			infra.Status.PlatformStatus = &configv1.PlatformStatus{}
+		}
+		infra.Status.PlatformStatus.BareMetal = &configv1.BareMetalPlatformStatus{
+			VIPManagement: vipManagement,
+		}
+	}
+}
+
+func buildBGPVIPConfigMap(configJSON string) *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "openshift-network-operator",
+			Name:      "bgp-vip-config",
+		},
+		Data: map[string]string{
+			"config.json": configJSON,
+		},
+	}
+}
+
+func TestSyncBGPVIPPeersJSON(t *testing.T) {
+	compactJSON := `{"localASN":64512,"defaultPeers":[{"peerAddress":"192.168.111.1","peerASN":64513}]}`
+	prettyJSON := `{
+  "localASN": 64512,
+  "defaultPeers": [
+    {
+      "peerAddress": "192.168.111.1",
+      "peerASN": 64513
+    }
+  ]
+}`
+	cases := []struct {
+		name                    string
+		infra                   *configv1.Infrastructure
+		configMap               *corev1.ConfigMap
+		expectError             bool
+		expectedBGPVIPPeersJSON string
+	}{
+		{
+			name:  "non-BareMetal platform is a no-op",
+			infra: buildInfra(withPlatformType(configv1.AWSPlatformType)),
+		},
+		{
+			name:  "BareMetal without BGP VIP management is a no-op",
+			infra: buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("")),
+		},
+		{
+			name:                    "BGP enabled with ConfigMap present",
+			infra:                   buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP")),
+			configMap:               buildBGPVIPConfigMap(compactJSON),
+			expectedBGPVIPPeersJSON: compactJSON,
+		},
+		{
+			name:                    "BGP enabled with pretty-printed ConfigMap payload is compacted",
+			infra:                   buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP")),
+			configMap:               buildBGPVIPConfigMap(prettyJSON),
+			expectedBGPVIPPeersJSON: compactJSON,
+		},
+		{
+			name:        "BGP enabled with missing ConfigMap degrades",
+			infra:       buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP")),
+			expectError: true,
+		},
+		{
+			name:        "BGP enabled with malformed payload degrades",
+			infra:       buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP")),
+			configMap:   buildBGPVIPConfigMap("{not json"),
+			expectError: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			objs := []runtime.Object{}
+			if tc.configMap != nil {
+				objs = append(objs, tc.configMap)
+			}
+			optr := &Operator{
+				kubeClient: fake.NewSimpleClientset(objs...),
+			}
+			spec := &mcfgv1.ControllerConfigSpec{}
+			err := optr.syncBGPVIPPeersJSON(spec, tc.infra)
+			if tc.expectError {
+				assert.Error(t, err)
+				assert.Empty(t, spec.BGPVIPPeersJSON)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expectedBGPVIPPeersJSON, spec.BGPVIPPeersJSON)
+		})
 	}
 }
 

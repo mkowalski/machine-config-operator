@@ -374,6 +374,19 @@ func (optr *Operator) syncCloudConfig(spec *mcfgv1.ControllerConfigSpec, infra *
 	return nil
 }
 
+// compactBGPVIPPeersJSON validates and compacts the bgp-vip-config payload so
+// it is safe to embed in single-line template contexts.
+func compactBGPVIPPeersJSON(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, []byte(raw)); err != nil {
+		return "", fmt.Errorf("bgp-vip-config config.json is not valid JSON: %w", err)
+	}
+	return buf.String(), nil
+}
+
 // syncBGPVIPPeersJSON populates spec.BGPVIPPeersJSON from the
 // openshift-network-operator/bgp-vip-config ConfigMap when BGP-based VIP
 // management is enabled on a BareMetal platform.
@@ -387,11 +400,18 @@ func (optr *Operator) syncBGPVIPPeersJSON(spec *mcfgv1.ControllerConfigSpec, inf
 		context.TODO(), "bgp-vip-config", metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil // tolerate absence; bootstrap-rendered peers file remains in place
+			// The spec is rebuilt from scratch on every sync, so silently
+			// tolerating absence would blank the peers file fleet-wide.
+			// Degrade instead, holding the last good ControllerConfig.
+			return fmt.Errorf("BGP VIP management is enabled but the openshift-network-operator/bgp-vip-config ConfigMap is missing")
 		}
 		return fmt.Errorf("failed to read bgp-vip-config ConfigMap: %w", err)
 	}
-	spec.BGPVIPPeersJSON = cm.Data["config.json"]
+	peersJSON, err := compactBGPVIPPeersJSON(cm.Data["config.json"])
+	if err != nil {
+		return err
+	}
+	spec.BGPVIPPeersJSON = peersJSON
 	return nil
 }
 

@@ -136,23 +136,40 @@ func TestGetPlatformManifests(t *testing.T) {
 
 func TestFillBGPVIPConfig(t *testing.T) {
 	dir := t.TempDir()
+	peersJSON := `{"localASN":64512,"defaultPeers":[{"peerAddress":"192.168.111.1","peerASN":64513}],"apiVIPs":["192.168.111.5"],"ingressVIPs":["192.168.111.4"]}`
 	cmYAML := `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: bgp-vip-config
   namespace: openshift-network-operator
 data:
-  config.json: '{"localASN":64512,"defaultPeers":[{"peerAddress":"192.168.111.1","peerASN":64513}],"apiVIPs":["192.168.111.5"],"ingressVIPs":["192.168.111.4"]}'
+  config.json: '` + peersJSON + `'
 `
 	path := filepath.Join(dir, "bgp-vip-config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(cmYAML), 0o644))
 
 	deps := &BootstrapDependencies{}
 	require.NoError(t, deps.fillBGPVIPConfig(path), "fillBGPVIPConfig")
-	assert.Contains(t, deps.BGPVIPPeersJSON, `"defaultPeers"`, "BGPVIPPeersJSON missing defaultPeers")
+	assert.Equal(t, peersJSON, deps.BGPVIPPeersJSON, "BGPVIPPeersJSON must be the compacted config.json payload")
 
 	// Missing file is tolerated (optional dependency).
 	deps2 := &BootstrapDependencies{}
 	require.NoError(t, deps2.fillBGPVIPConfig(filepath.Join(dir, "nonexistent.yaml")), "missing file must not error")
 	assert.Empty(t, deps2.BGPVIPPeersJSON, "expected empty for missing file")
+
+	// Malformed config.json payload must be rejected.
+	badCMYAML := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bgp-vip-config
+  namespace: openshift-network-operator
+data:
+  config.json: '{not json'
+`
+	badPath := filepath.Join(dir, "bgp-vip-config-bad.yaml")
+	require.NoError(t, os.WriteFile(badPath, []byte(badCMYAML), 0o644))
+
+	deps3 := &BootstrapDependencies{}
+	assert.Error(t, deps3.fillBGPVIPConfig(badPath), "malformed config.json must error")
+	assert.Empty(t, deps3.BGPVIPPeersJSON, "expected empty for malformed config.json")
 }
