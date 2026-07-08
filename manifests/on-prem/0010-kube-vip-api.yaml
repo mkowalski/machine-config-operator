@@ -14,7 +14,7 @@ spec:
   - operator: Exists
   containers:
   - name: kube-vip
-    image: quay.io/mkowalski/kube-vip:latest
+    image: {{ .Images.KubeVIPBootstrap }}
     env:
     - name: address
       value: "{{ onPremPlatformAPIServerInternalIP .ControllerConfig }}"

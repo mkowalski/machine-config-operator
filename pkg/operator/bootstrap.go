@@ -146,6 +146,8 @@ func buildSpec(dependencies *BootstrapDependencies, imgs *ctrlcommon.Images, rel
 		templatectrl.BaremetalRuntimeCfgKey: imgs.BaremetalRuntimeCfg,
 		templatectrl.KubeRbacProxyKey:       imgs.KubeRbacProxy,
 		templatectrl.DockerRegistryKey:      imgs.DockerRegistry,
+		templatectrl.FRRK8sKey:              imgs.FRRK8s,
+		templatectrl.KubeVIPKey:             imgs.KubeVip,
 	}
 
 	config := getRenderConfig("", dependencies.KubeAPIServerServingCA, spec,
