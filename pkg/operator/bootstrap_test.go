@@ -1,10 +1,13 @@
 package operator
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetPlatformManifests(t *testing.T) {
@@ -129,4 +132,27 @@ func TestGetPlatformManifests(t *testing.T) {
 			assert.Equal(t, c.expectKubeVIPAPI, hasKubeVIPAPI, "kube-vip-api manifest presence")
 		})
 	}
+}
+
+func TestFillBGPVIPConfig(t *testing.T) {
+	dir := t.TempDir()
+	cmYAML := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bgp-vip-config
+  namespace: openshift-network-operator
+data:
+  config.json: '{"localASN":64512,"defaultPeers":[{"peerAddress":"192.168.111.1","peerASN":64513}],"apiVIPs":["192.168.111.5"],"ingressVIPs":["192.168.111.4"]}'
+`
+	path := filepath.Join(dir, "bgp-vip-config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(cmYAML), 0o644))
+
+	deps := &BootstrapDependencies{}
+	require.NoError(t, deps.fillBGPVIPConfig(path), "fillBGPVIPConfig")
+	assert.Contains(t, deps.BGPVIPPeersJSON, `"defaultPeers"`, "BGPVIPPeersJSON missing defaultPeers")
+
+	// Missing file is tolerated (optional dependency).
+	deps2 := &BootstrapDependencies{}
+	require.NoError(t, deps2.fillBGPVIPConfig(filepath.Join(dir, "nonexistent.yaml")), "missing file must not error")
+	assert.Empty(t, deps2.BGPVIPPeersJSON, "expected empty for missing file")
 }

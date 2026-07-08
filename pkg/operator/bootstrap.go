@@ -130,6 +130,7 @@ func buildSpec(dependencies *BootstrapDependencies, imgs *ctrlcommon.Images, rel
 	}
 
 	spec.RootCAData = []byte(dependencies.MCSCA)
+	spec.BGPVIPPeersJSON = dependencies.BGPVIPPeersJSON
 	spec.PullSecret = nil
 	spec.BaseOSContainerImage = imgs.BaseOSContainerImage
 	spec.BaseOSExtensionsContainerImage = imgs.BaseOSExtensionsContainerImage

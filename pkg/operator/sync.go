@@ -374,6 +374,27 @@ func (optr *Operator) syncCloudConfig(spec *mcfgv1.ControllerConfigSpec, infra *
 	return nil
 }
 
+// syncBGPVIPPeersJSON populates spec.BGPVIPPeersJSON from the
+// openshift-network-operator/bgp-vip-config ConfigMap when BGP-based VIP
+// management is enabled on a BareMetal platform.
+func (optr *Operator) syncBGPVIPPeersJSON(spec *mcfgv1.ControllerConfigSpec, infra *configv1.Infrastructure) error {
+	if infra.Status.PlatformStatus == nil ||
+		infra.Status.PlatformStatus.BareMetal == nil ||
+		infra.Status.PlatformStatus.BareMetal.VIPManagement != "BGP" {
+		return nil
+	}
+	cm, err := optr.kubeClient.CoreV1().ConfigMaps("openshift-network-operator").Get(
+		context.TODO(), "bgp-vip-config", metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // tolerate absence; bootstrap-rendered peers file remains in place
+		}
+		return fmt.Errorf("failed to read bgp-vip-config ConfigMap: %w", err)
+	}
+	spec.BGPVIPPeersJSON = cm.Data["config.json"]
+	return nil
+}
+
 //nolint:gocyclo
 func (optr *Operator) syncRenderConfig(_ *renderConfig, _ *configv1.ClusterOperator) error {
 	if optr.inClusterBringup {
@@ -598,6 +619,10 @@ func (optr *Operator) syncRenderConfig(_ *renderConfig, _ *configv1.ClusterOpera
 		return err
 	}
 
+	if err := optr.syncBGPVIPPeersJSON(spec, infra); err != nil {
+		return err
+	}
+
 	if !osimagestream.IsFeatureEnabled(optr.fgHandler) {
 		oscontainer, osextensionscontainer, err := optr.getOSImageURLsFromConfigMap()
 		if err != nil {
@@ -625,6 +650,8 @@ func (optr *Operator) syncRenderConfig(_ *renderConfig, _ *configv1.ClusterOpera
 		templatectrl.BaremetalRuntimeCfgKey:   imgs.BaremetalRuntimeCfg,
 		templatectrl.KubeRbacProxyKey:         imgs.KubeRbacProxy,
 		templatectrl.DockerRegistryKey:        imgs.DockerRegistry,
+		templatectrl.FRRK8sKey:                imgs.FRRK8s,
+		templatectrl.KubeVIPKey:               imgs.KubeVip,
 	}
 
 	ignitionHost, err := getIgnitionHost(&infra.Status)

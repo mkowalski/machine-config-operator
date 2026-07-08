@@ -17,7 +17,7 @@ spec:
     image: quay.io/mkowalski/kube-vip:latest
     env:
     - name: address
-      value: "{{ onPremPlatformAPIServerInternalIP . }}"
+      value: "{{ onPremPlatformAPIServerInternalIP .ControllerConfig }}"
     - name: port
       value: "6443"
     - name: cp_enable

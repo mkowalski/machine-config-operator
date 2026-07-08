@@ -21,9 +21,9 @@ spec:
     - render
     - /etc/kubernetes/kubeconfig
     - --api-vips
-    - {{ onPremPlatformAPIServerInternalIP . }}
+    - {{ onPremPlatformAPIServerInternalIP .ControllerConfig }}
     - --ingress-vips
-    - {{ onPremPlatformIngressIP . }}
+    - {{ onPremPlatformIngressIP .ControllerConfig }}
     - /config/frr.conf.tmpl
     - --out-dir
     - /etc/frr
