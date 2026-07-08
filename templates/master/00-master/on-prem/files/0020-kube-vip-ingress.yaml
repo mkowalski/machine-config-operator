@@ -24,6 +24,8 @@ contents:
         env:
         - name: address
           value: "{{ onPremPlatformIngressIP . }}"
+        - name: k8s_config_file
+          value: "/etc/kubernetes/kubeconfig"
         - name: port
           value: "443"
         - name: cp_enable

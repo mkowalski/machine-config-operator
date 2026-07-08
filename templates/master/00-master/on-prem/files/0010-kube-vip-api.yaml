@@ -24,6 +24,8 @@ contents:
         env:
         - name: address
           value: "{{ onPremPlatformAPIServerInternalIP . }}"
+        - name: k8s_config_file
+          value: "/etc/kubernetes/kubeconfig"
         - name: port
           value: "6443"
         - name: cp_enable
