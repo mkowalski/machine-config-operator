@@ -231,10 +231,16 @@ contents:
       - name: resource-dir
         hostPath:
           path: /etc/kubernetes/static-pod-resources/frr-k8s
+      # hostPath (not emptyDir) so the CNO-managed metrics companion
+      # DaemonSet can reach the FRR sockets; perms via tmpfiles.d.
       - name: frr-conf
-        emptyDir: {}
+        hostPath:
+          path: /run/frr-k8s/conf
+          type: DirectoryOrCreate
       - name: frr-sockets
-        emptyDir: {}
+        hostPath:
+          path: /run/frr-k8s/sockets
+          type: DirectoryOrCreate
       - name: reloader
         emptyDir: {}
       - name: frr-status
