@@ -4,9 +4,8 @@ metadata:
   annotations:
     api-approved.openshift.io: https://github.com/openshift/api/pull/1453
     api.openshift.io/merged-by-featuregates: "true"
-    include.release.openshift.io/ibm-cloud-managed: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
-    release.openshift.io/feature-set: TechPreviewNoUpgrade
+    release.openshift.io/feature-set: DevPreviewNoUpgrade
   labels:
     openshift.io/operator-managed: ""
   name: controllerconfigs.machineconfiguration.openshift.io
@@ -352,6 +351,21 @@ spec:
                           name:
                             type: string
                         type: object
+                      controlPlaneTopology:
+                        description: |-
+                          controlPlaneTopology expresses the desired topology configuration for control nodes.
+
+                          When status.controlPlaneTopology is 'SingleReplica' and spec.controlPlaneTopology is set to 'HighlyAvailable',
+                          a transition will be triggered to reconfigure the cluster from SingleReplica to HighlyAvailable.
+
+                          When left blank or status.controlPlaneTopology and spec.controlPlaneTopology are the same value,
+                          no changes are required and no transitions will be triggered.
+
+                          This value may be set to match status.controlPlaneTopology regardless of the current value.
+                        enum:
+                        - HighlyAvailable
+                        - SingleReplica
+                        type: string
                       platformSpec:
                         description: |-
                           platformSpec holds desired information specific to the underlying
@@ -1373,6 +1387,14 @@ spec:
                                 type: array
                                 x-kubernetes-list-type: atomic
                                 x-kubernetes-validations:
+                                - message: Cannot add and remove vCenters at the same
+                                    time
+                                  rule: 'size(self) >= size(oldSelf) ? oldSelf.all(x,
+                                    self.exists(y, y.server == x.server)) : true'
+                                - message: Cannot add and remove vCenters at the same
+                                    time
+                                  rule: 'size(self) < size(oldSelf) ? self.all(x,
+                                    oldSelf.exists(y, y.server == x.server)) : true'
                                 - message: vcenters must have unique server values
                                   rule: self.all(x, self.exists_one(y, y.server ==
                                     x.server))
@@ -1385,10 +1407,9 @@ spec:
                               rule: '!has(oldSelf.ingressIPs) || has(self.ingressIPs)'
                         type: object
                         x-kubernetes-validations:
-                        - message: vcenters can have at most 1 item when configured
-                            post-install
-                          rule: '!has(oldSelf.vsphere) && has(self.vsphere) ? (has(self.vsphere.vcenters)
-                            && size(self.vsphere.vcenters) < 2) : true'
+                        - message: vcenters is required once set and cannot be removed
+                          rule: 'oldSelf.?vsphere.vcenters.hasValue() ? self.?vsphere.vcenters.hasValue()
+                            : true'
                     type: object
                   status:
                     description: status holds observed values from the cluster. They
@@ -3073,6 +3094,16 @@ spec:
                 - spec
                 type: object
                 x-kubernetes-embedded-resource: true
+                x-kubernetes-validations:
+                - message: spec.controlPlaneTopology must match status.controlPlaneTopology
+                    or be set to HighlyAvailable when status.controlPlaneTopology
+                    is SingleReplica
+                  rule: '!has(self.spec.controlPlaneTopology) || (has(oldSelf.spec.controlPlaneTopology)
+                    && self.spec.controlPlaneTopology == oldSelf.spec.controlPlaneTopology)
+                    || (has(self.status.controlPlaneTopology) && self.spec.controlPlaneTopology
+                    == self.status.controlPlaneTopology) || (has(self.status.controlPlaneTopology)
+                    && self.status.controlPlaneTopology == ''SingleReplica'' && self.spec.controlPlaneTopology
+                    == ''HighlyAvailable'')'
               internalRegistryPullSecret:
                 description: |-
                   internalRegistryPullSecret is the pull secret for the internal registry, used by

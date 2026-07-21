@@ -474,4 +474,4 @@ replace (
 	k8s.io/sample-controller => github.com/openshift/kubernetes/staging/src/k8s.io/sample-controller v0.0.0-20260305123649-d18f3f005eaa
 )
 
-replace github.com/openshift/api => /home/kmateusz/git/github.com/openshift-api-pre136
+replace github.com/openshift/api => /home/kmateusz/git/github.com/openshift-api-mco
