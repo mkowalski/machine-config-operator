@@ -268,6 +268,17 @@ contents:
           mountPath: /etc/frr
         - name: reloader
           mountPath: /etc/frr_reloader
+        # frr-reload.py (invoked by frr-reloader.sh) writes its temp copies of
+        # the running/target config to /tmp and its log to /var/log/frr; the
+        # CNO-managed frr-k8s DaemonSet's reloader has a writable root
+        # filesystem, so it needs no extra mounts. We keep
+        # readOnlyRootFilesystem and provide the two paths as emptyDirs
+        # instead — without them every reload fails and the node stays on the
+        # bootstrap FRR config forever.
+        - name: reloader-tmp
+          mountPath: /tmp
+        - name: frr-logs
+          mountPath: /var/log/frr
       - name: frr-status
         image: {{.Images.frrK8sImage}}
         command:
@@ -331,6 +342,10 @@ contents:
       - name: frr-lib
         emptyDir: {}
       - name: frr-tmp
+        emptyDir: {}
+      - name: reloader-tmp
+        emptyDir: {}
+      - name: frr-logs
         emptyDir: {}
       - name: frr-startup
         hostPath:

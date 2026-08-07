@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"text/template"
 
@@ -1346,4 +1347,38 @@ func TestFRRConfTemplateDisableConnectedCheck(t *testing.T) {
 	day2, err := os.ReadFile(filepath.Join("..", "..", "templates", "master", "00-master", "on-prem", "files", "frr-k8s-conf.yaml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(day2), "disable-connected-check")
+}
+
+// TestFRRK8sStaticPodReloaderWritableMounts guards against finding 4 of the
+// live validation: the reloader container keeps readOnlyRootFilesystem but
+// frr-reload.py must be able to write /tmp (temp config copies) and
+// /var/log/frr (its log). Without writable emptyDirs at those paths every
+// reload fails and nodes stay on the bootstrap FRR config forever.
+func TestFRRK8sStaticPodReloaderWritableMounts(t *testing.T) {
+	day2, err := os.ReadFile(filepath.Join("..", "..", "templates", "master", "00-master", "on-prem", "files", "0000-frr-k8s.yaml"))
+	require.NoError(t, err)
+	manifest := string(day2)
+
+	// The reloader container block must mount both writable paths.
+	reloaderIdx := strings.Index(manifest, "- name: reloader\n        image:")
+	require.GreaterOrEqual(t, reloaderIdx, 0, "reloader container expected in the day-2 static pod manifest")
+	reloaderBlock := manifest[reloaderIdx:]
+	if end := strings.Index(reloaderBlock, "- name: frr-status\n        image:"); end >= 0 {
+		reloaderBlock = reloaderBlock[:end]
+	}
+	assert.Contains(t, reloaderBlock, "readOnlyRootFilesystem: true", "keep the hardening; provide mounts instead")
+	assert.Contains(t, reloaderBlock, "mountPath: /tmp\n", "frr-reload.py writes temp configs to /tmp")
+	assert.Contains(t, reloaderBlock, "mountPath: /var/log/frr\n", "frr-reload.py logs to /var/log/frr")
+
+	// ...backed by emptyDir volumes.
+	assert.Contains(t, manifest, "- name: reloader-tmp\n        emptyDir: {}")
+	assert.Contains(t, manifest, "- name: frr-logs\n        emptyDir: {}")
+
+	// The bootstrap static pod has no reloader/controller containers (no
+	// frr-k8s reconciliation at bootstrap), so it intentionally needs no
+	// such mounts; assert that assumption so a future addition of a
+	// reloader there re-triggers this audit.
+	bootstrap, err := os.ReadFile(filepath.Join("..", "..", "manifests", "on-prem", "0000-frr-k8s.yaml"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(bootstrap), "frr-reloader", "bootstrap pod grew a reloader: give it writable /tmp and /var/log/frr emptyDirs too")
 }
