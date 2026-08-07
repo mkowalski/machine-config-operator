@@ -4,7 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
+	"text/template"
 
 	configv1 "github.com/openshift/api/config/v1"
 	features "github.com/openshift/api/features"
@@ -315,6 +321,7 @@ func TestSyncBGPVIPPeersJSON(t *testing.T) {
 		infra                   *configv1.Infrastructure
 		cr                      *mcfgv1alpha1.BGPVIPConfig
 		expectError             bool
+		ccApplyError            error
 		expectedBGPVIPPeersJSON string
 		expectedRendered        *metav1.ConditionStatus
 	}{
@@ -342,6 +349,14 @@ func TestSyncBGPVIPPeersJSON(t *testing.T) {
 			cr:                      buildBGPVIPConfigCR(),
 			expectedBGPVIPPeersJSON: goldenJSON,
 			expectedRendered:        ptr.To(metav1.ConditionTrue),
+		},
+		{
+			name:                    "ControllerConfig apply failure reports Rendered=False",
+			infra:                   buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP")),
+			cr:                      buildBGPVIPConfigCR(),
+			ccApplyError:            errors.New("controllerconfigs is forbidden"),
+			expectedBGPVIPPeersJSON: goldenJSON,
+			expectedRendered:        ptr.To(metav1.ConditionFalse),
 		},
 		{
 			name:             "BGP enabled with missing BGPVIPConfig degrades",
@@ -384,6 +399,12 @@ func TestSyncBGPVIPPeersJSON(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, tc.expectedBGPVIPPeersJSON, spec.BGPVIPPeersJSON)
 			}
+			// Rendered must not be reported by the render step itself: the
+			// status write only happens after the ControllerConfig apply
+			// outcome is known (live validation caught Rendered=True while
+			// the fleet still ran the previous generation's peers).
+			assert.Nil(t, patched, "no status write expected before the ControllerConfig apply")
+			optr.reportBGPVIPConfigRendered(tc.ccApplyError)
 			if tc.expectedRendered == nil {
 				assert.Nil(t, patched, "no status write expected")
 				return
@@ -399,6 +420,10 @@ func TestSyncBGPVIPPeersJSON(t *testing.T) {
 			assert.Equal(t, mcfgv1alpha1.BGPVIPConfigRendered, cond["type"])
 			assert.Equal(t, string(*tc.expectedRendered), cond["status"])
 			assert.Equal(t, float64(tc.cr.Generation), cond["observedGeneration"])
+			if *tc.expectedRendered == metav1.ConditionFalse {
+				assert.Equal(t, "RenderFailed", cond["reason"])
+				assert.Contains(t, cond["message"], "controllerconfigs is forbidden")
+			}
 		})
 	}
 }
@@ -1275,4 +1300,50 @@ func buildMachineConfigurationWithBootImageDisabledAndNoSkewEnforcement() *opv1.
 			},
 		},
 	}
+}
+
+// TestFRRConfTemplateDisableConnectedCheck double-renders the static-pod FRR
+// config template the way it is consumed in production (MCO outer render,
+// then runtimecfg inner render) and asserts every neighbor gets
+// `disable-connected-check`, matching frr-k8s's renderer. Without it, the
+// RA-assigned /128 on br-ex fails FRR's EBGP connected-check after a reboot
+// ("Must be Connected") and IPv6 VIP advertisement dies (live validation).
+func TestFRRConfTemplateDisableConnectedCheck(t *testing.T) {
+	// Outer pass: the MCO asset render only unwraps the {{` ... `}} escapes.
+	outer, err := renderAsset(&renderConfig{}, "manifests/on-prem/frr.conf.tmpl")
+	require.NoError(t, err)
+
+	// Inner pass: emulate runtimecfg rendering the on-disk tmpl.
+	type peer struct {
+		PeerAddress, PeerASN, Password, BFDEnabled, EBGPMultiHop, HoldTime, KeepaliveTime string
+	}
+	data := struct {
+		Hostname, LocalASN, RouterID string
+		Peers                        []peer
+		Communities                  []string
+	}{
+		Hostname: "master-0", LocalASN: "64512", RouterID: "192.168.111.20",
+		Peers: []peer{
+			{PeerAddress: "192.168.111.1", PeerASN: "64513"},
+			{PeerAddress: "fd2e:6f44:5dd8:c956::1", PeerASN: "64513"},
+		},
+	}
+	tmpl, err := template.New("frr").Funcs(template.FuncMap{
+		"isIPv4": func(s string) bool { ip := net.ParseIP(s); return ip != nil && ip.To4() != nil },
+		"isIPv6": func(s string) bool { ip := net.ParseIP(s); return ip != nil && ip.To4() == nil },
+	}).Parse(string(outer))
+	require.NoError(t, err)
+	var rendered bytes.Buffer
+	require.NoError(t, tmpl.Execute(&rendered, data))
+
+	for _, p := range data.Peers {
+		assert.Contains(t, rendered.String(), fmt.Sprintf(" neighbor %s disable-connected-check\n", p.PeerAddress),
+			"every neighbor must carry disable-connected-check (frr-k8s parity)")
+	}
+
+	// The day-2 MachineConfig template must stay in sync with the bootstrap
+	// asset above.
+	day2, err := os.ReadFile(filepath.Join("..", "..", "templates", "master", "00-master", "on-prem", "files", "frr-k8s-conf.yaml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(day2), "disable-connected-check")
 }

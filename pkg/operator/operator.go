@@ -134,6 +134,10 @@ type Operator struct {
 	bgpVIPConfigLister       dynamiclister.Lister
 	bgpVIPConfigListerSynced cache.InformerSynced
 	bgpVIPConfigClient       dynamic.NamespaceableResourceInterface
+	// bgpVIPConfigToReport is the BGPVIPConfig generation whose rendered
+	// peers are pending a ControllerConfig apply; its Rendered condition is
+	// written by reportBGPVIPConfigRendered after the apply outcome is known.
+	bgpVIPConfigToReport *mcfgv1alpha1.BGPVIPConfig
 
 	crdListerSynced                  cache.InformerSynced
 	deployListerSynced               cache.InformerSynced

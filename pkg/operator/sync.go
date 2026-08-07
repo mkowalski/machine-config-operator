@@ -496,10 +496,32 @@ func (optr *Operator) syncBGPVIPPeersJSON(spec *mcfgv1.ControllerConfigSpec, inf
 		return err
 	}
 	spec.BGPVIPPeersJSON = peersJSON
-	if statusErr := optr.applyBGPVIPConfigRenderedStatus(cr, nil); statusErr != nil {
-		return fmt.Errorf("failed to update BGPVIPConfig status: %w", statusErr)
-	}
+	// Rendering succeeded, but Rendered=True must only be reported once the
+	// ControllerConfig apply for this generation has succeeded (see
+	// reportBGPVIPConfigRendered, called from syncControllerConfig).
+	// Reporting here would claim success while the fleet still runs the
+	// previous generation's peers.
+	optr.bgpVIPConfigToReport = cr
 	return nil
+}
+
+// reportBGPVIPConfigRendered reports the outcome of the ControllerConfig
+// apply on the BGPVIPConfig Rendered condition. It must be called after the
+// ApplyControllerConfig attempt in syncControllerConfig: Rendered=True is
+// only truthful once the rendered peers actually reached the
+// ControllerConfig; on apply failure the condition goes
+// Rendered=False/RenderFailed.
+func (optr *Operator) reportBGPVIPConfigRendered(applyErr error) {
+	cr := optr.bgpVIPConfigToReport
+	if cr == nil {
+		return
+	}
+	if applyErr != nil {
+		applyErr = fmt.Errorf("failed to apply the ControllerConfig carrying the rendered BGP VIP peers: %w", applyErr)
+	}
+	if statusErr := optr.applyBGPVIPConfigRenderedStatus(cr, applyErr); statusErr != nil {
+		klog.Errorf("Failed to update BGPVIPConfig status: %v", statusErr)
+	}
 }
 
 // applyBGPVIPConfigRenderedStatus server-side-applies the Rendered condition
@@ -1374,6 +1396,7 @@ func (optr *Operator) syncControllerConfig(config *renderConfig) error {
 	cc.Annotations[ctrlcommon.ReleaseImageVersionAnnotationKey] = optrVersion
 
 	_, _, err = mcoResourceApply.ApplyControllerConfig(optr.client.MachineconfigurationV1(), cc)
+	optr.reportBGPVIPConfigRendered(err)
 	if err != nil {
 		return err
 	}
