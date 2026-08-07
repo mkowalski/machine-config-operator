@@ -169,6 +169,13 @@ var (
 					},
 				},
 			},
+			// After the bootstrap-to-CRD handover the on-disk peers file
+			// only matters at early boot; day-2 edits must not disrupt
+			// nodes.
+			{
+				Path:    "/etc/kubernetes/static-pod-resources/frr-k8s/frr-peers.json",
+				Actions: []opv1.NodeDisruptionPolicyStatusAction{{Type: opv1.NoneStatusAction}},
+			},
 		},
 		Units: []opv1.NodeDisruptionPolicyStatusUnit{
 			{

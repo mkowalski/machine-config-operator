@@ -1,7 +1,9 @@
 package operator
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -19,6 +21,7 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	mcfgv1 "github.com/openshift/api/machineconfiguration/v1"
+	mcfgv1alpha1 "github.com/openshift/api/machineconfiguration/v1alpha1"
 	opv1 "github.com/openshift/api/operator/v1"
 	configlistersv1 "github.com/openshift/client-go/config/listers/config/v1"
 	fakeclientmachineconfigv1 "github.com/openshift/client-go/machineconfiguration/clientset/versioned/fake"
@@ -28,8 +31,13 @@ import (
 	fakemcopclientset "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	mcoplistersv1 "github.com/openshift/client-go/operator/listers/operator/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic/dynamiclister"
+	fakedynamic "k8s.io/client-go/dynamic/fake"
+	clienttesting "k8s.io/client-go/testing"
+	"k8s.io/utils/ptr"
 )
 
 func TestSyncCloudConfig(t *testing.T) {
@@ -194,35 +202,121 @@ func withBareMetalVIPManagement(vipManagement configv1.VIPManagementType) infraO
 	}
 }
 
-func buildBGPVIPConfigMap(configJSON string) *corev1.ConfigMap {
-	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "openshift-network-operator",
-			Name:      "bgp-vip-config",
-		},
-		Data: map[string]string{
-			"config.json": configJSON,
-		},
+func withDualStackVIPs() infraOption {
+	return func(infra *configv1.Infrastructure) {
+		infra.Status.PlatformStatus.BareMetal.APIServerInternalIPs = []string{"192.168.111.5", "fd2e:6f44:5dd8:c956::5"}
+		infra.Status.PlatformStatus.BareMetal.IngressIPs = []string{"192.168.111.4", "fd2e:6f44:5dd8:c956::4"}
 	}
 }
 
+func buildBGPVIPConfigCR(opts ...func(*mcfgv1alpha1.BGPVIPConfig)) *mcfgv1alpha1.BGPVIPConfig {
+	cr := &mcfgv1alpha1.BGPVIPConfig{
+		TypeMeta:   metav1.TypeMeta{APIVersion: mcfgv1alpha1.GroupVersion.String(), Kind: "BGPVIPConfig"},
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster", Generation: 3},
+		Spec: mcfgv1alpha1.BGPVIPConfigSpec{
+			LocalASN: 64512,
+			DefaultPeers: []mcfgv1alpha1.BGPVIPPeer{
+				{PeerAddress: "192.168.111.1", PeerASN: 64513},
+				{PeerAddress: "fd2e:6f44:5dd8:c956::1", PeerASN: 64513},
+			},
+		},
+	}
+	for _, o := range opts {
+		o(cr)
+	}
+	return cr
+}
+
+// TestBGPVIPPeersJSONFromCR locks the serialized transport to the Dev
+// Preview config.json schema so templates and runtimecfg stay untouched.
+// The dual-stack golden payload was captured from a live cluster
+// (openshift-network-operator/bgp-vip-config, data["config.json"]).
+func TestBGPVIPPeersJSONFromCR(t *testing.T) {
+	goldenDualStack := `{"localASN":64512,"defaultPeers":[{"peerAddress":"192.168.111.1","peerASN":64513},{"peerAddress":"fd2e:6f44:5dd8:c956::1","peerASN":64513}],"apiVIPs":["192.168.111.5","fd2e:6f44:5dd8:c956::5"],"ingressVIPs":["192.168.111.4","fd2e:6f44:5dd8:c956::4"]}`
+
+	cases := []struct {
+		name     string
+		cr       *mcfgv1alpha1.BGPVIPConfig
+		infra    *configv1.Infrastructure
+		expected string
+	}{
+		{
+			name:     "dual-stack, no overrides (live-cluster golden)",
+			cr:       buildBGPVIPConfigCR(),
+			infra:    buildInfra(withBareMetalVIPManagement("BGP"), withDualStackVIPs()),
+			expected: goldenDualStack,
+		},
+		{
+			name: "enums, timers, port, password, communities and host overrides",
+			cr: buildBGPVIPConfigCR(func(cr *mcfgv1alpha1.BGPVIPConfig) {
+				cr.Spec.DefaultPeers = []mcfgv1alpha1.BGPVIPPeer{{
+					PeerAddress:          "192.168.111.1",
+					PeerASN:              64513,
+					Password:             "s3cret",
+					Port:                 1790,
+					BFD:                  mcfgv1alpha1.BFDModeEnabled,
+					EBGPMultiHop:         mcfgv1alpha1.EBGPMultiHopModeDisabled,
+					HoldTimeSeconds:      90,
+					KeepaliveTimeSeconds: 30,
+				}}
+				cr.Spec.Communities = []string{"64512:100", "64512:4200000000:300"}
+				cr.Spec.HostOverrides = []mcfgv1alpha1.BGPVIPHostPeers{{
+					Hostname: "master-0",
+					Peers: []mcfgv1alpha1.BGPVIPPeer{{
+						PeerAddress: "192.168.111.2",
+						PeerASN:     64514,
+						BFD:         mcfgv1alpha1.BFDModeDisabled,
+					}},
+				}}
+			}),
+			infra:    buildInfra(withBareMetalVIPManagement("BGP")),
+			expected: `{"localASN":64512,"defaultPeers":[{"peerAddress":"192.168.111.1","peerASN":64513,"password":"s3cret","port":1790,"bfdEnabled":"true","ebgpMultiHop":"false","holdTime":"90s","keepaliveTime":"30s"}],"communities":["64512:100","64512:4200000000:300"],"apiVIPs":["192.168.111.5"],"ingressVIPs":["192.168.111.4"],"hostOverrides":{"master-0":[{"peerAddress":"192.168.111.2","peerASN":64514,"bfdEnabled":"false"}]}}`,
+		},
+		{
+			name: "omitted enums and zero timers are absent",
+			cr: buildBGPVIPConfigCR(func(cr *mcfgv1alpha1.BGPVIPConfig) {
+				cr.Spec.DefaultPeers = []mcfgv1alpha1.BGPVIPPeer{{
+					PeerAddress: "192.168.111.1",
+					PeerASN:     64513,
+				}}
+			}),
+			infra:    buildInfra(withBareMetalVIPManagement("BGP")),
+			expected: `{"localASN":64512,"defaultPeers":[{"peerAddress":"192.168.111.1","peerASN":64513}],"apiVIPs":["192.168.111.5"],"ingressVIPs":["192.168.111.4"]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := bgpVIPPeersJSONFromCR(tc.cr, tc.infra)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expected, got)
+			// Sanity: the payload must be valid, compact JSON.
+			var buf bytes.Buffer
+			require.NoError(t, json.Compact(&buf, []byte(got)))
+			assert.Equal(t, got, buf.String())
+		})
+	}
+}
+
+func newBGPVIPConfigLister(t *testing.T, crs ...*mcfgv1alpha1.BGPVIPConfig) dynamiclister.Lister {
+	t.Helper()
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	for _, cr := range crs {
+		content, err := runtime.DefaultUnstructuredConverter.ToUnstructured(cr)
+		require.NoError(t, err)
+		require.NoError(t, indexer.Add(&unstructured.Unstructured{Object: content}))
+	}
+	return dynamiclister.New(indexer, bgpVIPConfigGVR)
+}
+
 func TestSyncBGPVIPPeersJSON(t *testing.T) {
-	compactJSON := `{"localASN":64512,"defaultPeers":[{"peerAddress":"192.168.111.1","peerASN":64513}]}`
-	prettyJSON := `{
-  "localASN": 64512,
-  "defaultPeers": [
-    {
-      "peerAddress": "192.168.111.1",
-      "peerASN": 64513
-    }
-  ]
-}`
+	goldenJSON := `{"localASN":64512,"defaultPeers":[{"peerAddress":"192.168.111.1","peerASN":64513},{"peerAddress":"fd2e:6f44:5dd8:c956::1","peerASN":64513}],"apiVIPs":["192.168.111.5"],"ingressVIPs":["192.168.111.4"]}`
 	cases := []struct {
 		name                    string
 		infra                   *configv1.Infrastructure
-		configMap               *corev1.ConfigMap
+		cr                      *mcfgv1alpha1.BGPVIPConfig
 		expectError             bool
 		expectedBGPVIPPeersJSON string
+		expectedRendered        *metav1.ConditionStatus
 	}{
 		{
 			name:  "non-BareMetal platform is a no-op",
@@ -235,7 +329,7 @@ func TestSyncBGPVIPPeersJSON(t *testing.T) {
 		{
 			// User-managed load balancer: BGP mode without VIPs renders
 			// keepalived-neither-BGP, and the peers ingestion must not
-			// degrade the operator over the (rightfully) absent ConfigMap.
+			// degrade the operator over the (rightfully) absent CR.
 			name: "BGP without VIPs is a no-op",
 			infra: buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP"),
 				func(infra *configv1.Infrastructure) {
@@ -243,54 +337,68 @@ func TestSyncBGPVIPPeersJSON(t *testing.T) {
 				}),
 		},
 		{
-			name:                    "BGP enabled with ConfigMap present",
+			name:                    "BGP enabled with BGPVIPConfig present",
 			infra:                   buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP")),
-			configMap:               buildBGPVIPConfigMap(compactJSON),
-			expectedBGPVIPPeersJSON: compactJSON,
+			cr:                      buildBGPVIPConfigCR(),
+			expectedBGPVIPPeersJSON: goldenJSON,
+			expectedRendered:        ptr.To(metav1.ConditionTrue),
 		},
 		{
-			name:                    "BGP enabled with pretty-printed ConfigMap payload is compacted",
-			infra:                   buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP")),
-			configMap:               buildBGPVIPConfigMap(prettyJSON),
-			expectedBGPVIPPeersJSON: compactJSON,
-		},
-		{
-			name:        "BGP enabled with missing ConfigMap degrades",
-			infra:       buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP")),
-			expectError: true,
-		},
-		{
-			name:        "BGP enabled with malformed payload degrades",
-			infra:       buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP")),
-			configMap:   buildBGPVIPConfigMap("{not json"),
-			expectError: true,
-		},
-		{
-			name:        "BGP enabled with empty config.json payload degrades",
-			infra:       buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP")),
-			configMap:   buildBGPVIPConfigMap(""),
-			expectError: true,
+			name:             "BGP enabled with missing BGPVIPConfig degrades",
+			infra:            buildInfra(withPlatformType(configv1.BareMetalPlatformType), withBareMetalVIPManagement("BGP")),
+			expectError:      true,
+			expectedRendered: nil, // no CR to write status to
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sharedInformer := informers.NewSharedInformerFactory(fake.NewSimpleClientset(), 0)
-			cmInformer := sharedInformer.Core().V1().ConfigMaps()
-			if tc.configMap != nil {
-				require.NoError(t, cmInformer.Informer().GetIndexer().Add(tc.configMap))
+			scheme := runtime.NewScheme()
+			require.NoError(t, mcfgv1alpha1.AddToScheme(scheme))
+			var objs []runtime.Object
+			var crs []*mcfgv1alpha1.BGPVIPConfig
+			if tc.cr != nil {
+				objs = append(objs, tc.cr)
+				crs = append(crs, tc.cr)
 			}
+			dynamicClient := fakedynamic.NewSimpleDynamicClient(scheme, objs...)
+			var patched []byte
+			dynamicClient.PrependReactor("patch", "bgpvipconfigs", func(action clienttesting.Action) (bool, runtime.Object, error) {
+				patchAction := action.(clienttesting.PatchAction)
+				assert.Equal(t, "status", action.GetSubresource(), "status subresource expected")
+				assert.Equal(t, types.ApplyPatchType, patchAction.GetPatchType(), "server-side apply expected")
+				patched = patchAction.GetPatch()
+				content, err := runtime.DefaultUnstructuredConverter.ToUnstructured(tc.cr)
+				require.NoError(t, err)
+				return true, &unstructured.Unstructured{Object: content}, nil
+			})
 			optr := &Operator{
-				clusterCmLister: cmInformer.Lister(),
+				bgpVIPConfigLister: newBGPVIPConfigLister(t, crs...),
+				bgpVIPConfigClient: dynamicClient.Resource(bgpVIPConfigGVR),
 			}
 			spec := &mcfgv1.ControllerConfigSpec{}
 			err := optr.syncBGPVIPPeersJSON(spec, tc.infra)
 			if tc.expectError {
 				assert.Error(t, err)
 				assert.Empty(t, spec.BGPVIPPeersJSON)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.expectedBGPVIPPeersJSON, spec.BGPVIPPeersJSON)
+			}
+			if tc.expectedRendered == nil {
+				assert.Nil(t, patched, "no status write expected")
 				return
 			}
-			assert.NoError(t, err)
-			assert.Equal(t, tc.expectedBGPVIPPeersJSON, spec.BGPVIPPeersJSON)
+			require.NotNil(t, patched, "a status apply is expected")
+			var applied map[string]interface{}
+			require.NoError(t, json.Unmarshal(patched, &applied))
+			status := applied["status"].(map[string]interface{})
+			assert.Equal(t, float64(tc.cr.Generation), status["observedGeneration"])
+			conds := status["conditions"].([]interface{})
+			require.Len(t, conds, 1)
+			cond := conds[0].(map[string]interface{})
+			assert.Equal(t, mcfgv1alpha1.BGPVIPConfigRendered, cond["type"])
+			assert.Equal(t, string(*tc.expectedRendered), cond["status"])
+			assert.Equal(t, float64(tc.cr.Generation), cond["observedGeneration"])
 		})
 	}
 }

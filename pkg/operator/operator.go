@@ -11,6 +11,7 @@ import (
 	"k8s.io/utils/clock"
 
 	configv1 "github.com/openshift/api/config/v1"
+	mcfgv1alpha1 "github.com/openshift/api/machineconfiguration/v1alpha1"
 	configclientset "github.com/openshift/client-go/config/clientset/versioned"
 	ctrlcommon "github.com/openshift/machine-config-operator/pkg/controller/common"
 	"github.com/openshift/machine-config-operator/pkg/version"
@@ -66,6 +67,10 @@ const (
 	// 5ms, 10ms, 20ms, 40ms, 80ms, 160ms, 320ms, 640ms, 1.3s, 2.6s, 5.1s, 10.2s, 20.4s, 41s, 82s
 	maxRetries = 15
 )
+
+// bgpVIPConfigGVR identifies the BGPVIPConfig resource watched via the
+// dynamic client (no generated typed clients exist for it yet).
+var bgpVIPConfigGVR = mcfgv1alpha1.GroupVersion.WithResource("bgpvipconfigs")
 
 // Operator defines machince config operator.
 type Operator struct {
@@ -126,6 +131,9 @@ type Operator struct {
 	iriLister                mcfglistersv1.InternalReleaseImageLister
 	provisioningLister       dynamiclister.Lister
 	provisioningListerSynced cache.InformerSynced
+	bgpVIPConfigLister       dynamiclister.Lister
+	bgpVIPConfigListerSynced cache.InformerSynced
+	bgpVIPConfigClient       dynamic.NamespaceableResourceInterface
 
 	crdListerSynced                  cache.InformerSynced
 	deployListerSynced               cache.InformerSynced
@@ -395,6 +403,15 @@ func New(
 	optr.provisioningLister = dynamiclister.New(provisioningInformer.Informer().GetIndexer(), provisioningGVR)
 	optr.provisioningListerSynced = provisioningInformer.Informer().HasSynced
 	optr.provisioningInformerFactory = provisioningFactory
+
+	// The BGPVIPConfig informer shares the BareMetal-only dynamic factory:
+	// BGP-based VIP management only exists on BareMetal, and the CRD is
+	// feature-gated so watching it elsewhere would just produce noise.
+	bgpVIPConfigInformer := provisioningFactory.ForResource(bgpVIPConfigGVR)
+	bgpVIPConfigInformer.Informer().AddEventHandler(optr.eventHandler())
+	optr.bgpVIPConfigLister = dynamiclister.New(bgpVIPConfigInformer.Informer().GetIndexer(), bgpVIPConfigGVR)
+	optr.bgpVIPConfigListerSynced = bgpVIPConfigInformer.Informer().HasSynced
+	optr.bgpVIPConfigClient = dynamicClient.Resource(bgpVIPConfigGVR)
 
 	optr.vStore.Set("operator", version.ReleaseVersion)
 	optr.vStore.Set("operator-image", version.OperatorImage)

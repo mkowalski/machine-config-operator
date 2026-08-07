@@ -156,58 +156,53 @@ func TestGetPlatformManifests(t *testing.T) {
 
 func TestFillBGPVIPConfig(t *testing.T) {
 	dir := t.TempDir()
-	peersJSON := `{"localASN":64512,"defaultPeers":[{"peerAddress":"192.168.111.1","peerASN":64513}],"apiVIPs":["192.168.111.5"],"ingressVIPs":["192.168.111.4"]}`
-	cmYAML := `apiVersion: v1
-kind: ConfigMap
+	expectedJSON := `{"localASN":64512,"defaultPeers":[{"peerAddress":"192.168.111.1","peerASN":64513}],"apiVIPs":["192.168.111.5"],"ingressVIPs":["192.168.111.4"]}`
+	crYAML := `apiVersion: machineconfiguration.openshift.io/v1alpha1
+kind: BGPVIPConfig
 metadata:
-  name: bgp-vip-config
-  namespace: openshift-network-operator
-data:
-  config.json: '` + peersJSON + `'
+  name: cluster
+spec:
+  localASN: 64512
+  defaultPeers:
+  - peerAddress: 192.168.111.1
+    peerASN: 64513
 `
+	infra := &configv1.Infrastructure{
+		Status: configv1.InfrastructureStatus{
+			PlatformStatus: &configv1.PlatformStatus{
+				Type: configv1.BareMetalPlatformType,
+				BareMetal: &configv1.BareMetalPlatformStatus{
+					APIServerInternalIPs: []string{"192.168.111.5"},
+					IngressIPs:           []string{"192.168.111.4"},
+				},
+			},
+		},
+	}
 	path := filepath.Join(dir, "bgp-vip-config.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(cmYAML), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte(crYAML), 0o644))
 
-	deps := &BootstrapDependencies{}
+	deps := &BootstrapDependencies{Infrastructure: infra}
 	require.NoError(t, deps.fillBGPVIPConfig(path), "fillBGPVIPConfig")
-	assert.Equal(t, peersJSON, deps.BGPVIPPeersJSON, "BGPVIPPeersJSON must be the compacted config.json payload")
+	assert.Equal(t, expectedJSON, deps.BGPVIPPeersJSON, "BGPVIPPeersJSON must match the Dev Preview payload schema")
 
 	// Missing file is tolerated (optional dependency).
-	deps2 := &BootstrapDependencies{}
+	deps2 := &BootstrapDependencies{Infrastructure: infra}
 	require.NoError(t, deps2.fillBGPVIPConfig(filepath.Join(dir, "nonexistent.yaml")), "missing file must not error")
 	assert.Empty(t, deps2.BGPVIPPeersJSON, "expected empty for missing file")
 
-	// Malformed config.json payload must be rejected.
-	badCMYAML := `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: bgp-vip-config
-  namespace: openshift-network-operator
-data:
-  config.json: '{not json'
-`
+	// A manifest that is not a BGPVIPConfig must be rejected.
 	badPath := filepath.Join(dir, "bgp-vip-config-bad.yaml")
-	require.NoError(t, os.WriteFile(badPath, []byte(badCMYAML), 0o644))
+	require.NoError(t, os.WriteFile(badPath, []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: bgp-vip-config\n"), 0o644))
+	deps3 := &BootstrapDependencies{Infrastructure: infra}
+	assert.Error(t, deps3.fillBGPVIPConfig(badPath), "non-BGPVIPConfig manifest must error")
+	assert.Empty(t, deps3.BGPVIPPeersJSON, "expected empty for wrong manifest kind")
 
-	deps3 := &BootstrapDependencies{}
-	assert.Error(t, deps3.fillBGPVIPConfig(badPath), "malformed config.json must error")
-	assert.Empty(t, deps3.BGPVIPPeersJSON, "expected empty for malformed config.json")
-
-	// A present ConfigMap without a config.json payload must be rejected
-	// (mirrors the day-2 sync behavior).
-	emptyCMYAML := `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: bgp-vip-config
-  namespace: openshift-network-operator
-data: {}
-`
-	emptyPath := filepath.Join(dir, "bgp-vip-config-empty.yaml")
-	require.NoError(t, os.WriteFile(emptyPath, []byte(emptyCMYAML), 0o644))
-
-	deps4 := &BootstrapDependencies{}
-	assert.Error(t, deps4.fillBGPVIPConfig(emptyPath), "empty config.json payload must error")
-	assert.Empty(t, deps4.BGPVIPPeersJSON, "expected empty for empty config.json")
+	// Malformed YAML must be rejected.
+	malformedPath := filepath.Join(dir, "bgp-vip-config-malformed.yaml")
+	require.NoError(t, os.WriteFile(malformedPath, []byte("{not yaml"), 0o644))
+	deps4 := &BootstrapDependencies{Infrastructure: infra}
+	assert.Error(t, deps4.fillBGPVIPConfig(malformedPath), "malformed manifest must error")
+	assert.Empty(t, deps4.BGPVIPPeersJSON, "expected empty for malformed manifest")
 }
 
 // TestBuildSpecBGPImageValidation locks the bootstrap hard-fail: rendering a
