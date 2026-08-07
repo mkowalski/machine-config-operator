@@ -471,6 +471,10 @@ func bgpVIPPeersJSONFromCR(cr *mcfgv1alpha1.BGPVIPConfig, infra *configv1.Infras
 // "cluster" CR when BGP-based VIP management is enabled on a BareMetal
 // platform, and reports the outcome on the CR's Rendered condition.
 func (optr *Operator) syncBGPVIPPeersJSON(spec *mcfgv1.ControllerConfigSpec, infra *configv1.Infrastructure) error {
+	// Any previously pending report is stale the moment a new render starts:
+	// a deleted CR or a disabled feature must not leave an old pointer being
+	// re-reported. The pointer is re-set below only on a successful render.
+	optr.bgpVIPConfigToReport = nil
 	if !ctrlcommon.IsBGPVIPManagement(infra) {
 		return nil
 	}
@@ -516,6 +520,10 @@ func (optr *Operator) reportBGPVIPConfigRendered(applyErr error) {
 	if cr == nil {
 		return
 	}
+	// The pending report is consumed exactly once; a later ControllerConfig
+	// apply without a fresh render (e.g. after the CR is deleted) must not
+	// re-report status from a stale pointer.
+	optr.bgpVIPConfigToReport = nil
 	if applyErr != nil {
 		applyErr = fmt.Errorf("failed to apply the ControllerConfig carrying the rendered BGP VIP peers: %w", applyErr)
 	}

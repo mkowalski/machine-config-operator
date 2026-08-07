@@ -392,6 +392,9 @@ func TestSyncBGPVIPPeersJSON(t *testing.T) {
 				bgpVIPConfigClient: dynamicClient.Resource(bgpVIPConfigGVR),
 			}
 			spec := &mcfgv1.ControllerConfigSpec{}
+			// Pre-seed a stale pending report: every sync must clear it so a
+			// deleted CR or a disabled feature cannot be re-reported.
+			optr.bgpVIPConfigToReport = &mcfgv1alpha1.BGPVIPConfig{}
 			err := optr.syncBGPVIPPeersJSON(spec, tc.infra)
 			if tc.expectError {
 				assert.Error(t, err)
@@ -408,6 +411,7 @@ func TestSyncBGPVIPPeersJSON(t *testing.T) {
 			optr.reportBGPVIPConfigRendered(tc.ccApplyError)
 			if tc.expectedRendered == nil {
 				assert.Nil(t, patched, "no status write expected")
+				assert.Nil(t, optr.bgpVIPConfigToReport, "the stale pending report must have been cleared by the sync")
 				return
 			}
 			require.NotNil(t, patched, "a status apply is expected")
@@ -425,6 +429,13 @@ func TestSyncBGPVIPPeersJSON(t *testing.T) {
 				assert.Equal(t, "RenderFailed", cond["reason"])
 				assert.Contains(t, cond["message"], "controllerconfigs is forbidden")
 			}
+			// The pending report is consumed exactly once: the pointer is
+			// cleared, and a second ControllerConfig apply (without a fresh
+			// render) must not re-apply status from a stale CR.
+			assert.Nil(t, optr.bgpVIPConfigToReport, "pending report must be cleared after being consumed")
+			patched = nil
+			optr.reportBGPVIPConfigRendered(tc.ccApplyError)
+			assert.Nil(t, patched, "a second ControllerConfig apply must not re-report status")
 		})
 	}
 }
