@@ -581,6 +581,8 @@ github.com/mitchellh/go-homedir v1.1.0 h1:lukF9ziXFxDFPkA1vsr5zpc1XuPDn/wFntq5mG
 github.com/mitchellh/go-homedir v1.1.0/go.mod h1:SfyaCUpYCn1Vlf4IUYiD9fPX4A5wJrkLzIz1N1q0pr0=
 github.com/mitchellh/go-wordwrap v1.0.1 h1:TLuKupo69TCn6TQSyGxwI1EblZZEsQ0vMlAFQflz0v0=
 github.com/mitchellh/go-wordwrap v1.0.1/go.mod h1:R62XHJLzvMFRBbcrT7m7WgmE1eOyTSsCt+hzestvNj0=
+github.com/mkowalski/openshift-api v0.0.0-20260807131454-15e15a151453 h1:wAU8FTRWKE2pBnxsrHnGbjIKIvaOu5j+F7EWdxAq/as=
+github.com/mkowalski/openshift-api v0.0.0-20260807131454-15e15a151453/go.mod h1:k6qH5QOVa5GDln2VVm8Jz4NV3Z7R2SATHFLwGS6Wh3M=
 github.com/moby/buildkit v0.29.0 h1:wxLEFbCOJntEDjSNNN2YWd8zxltZxT5muDQ0LzpbtpU=
 github.com/moby/buildkit v0.29.0/go.mod h1:Dmv2FeDe34t75QuzeU87rBoZpAAkcpT5zeu4hXzmASc=
 github.com/moby/docker-image-spec v1.3.1 h1:jMKff3w6PgbfSa69GfNg+zN/XLhfXJGnEx3Nl2EsFP0=
@@ -651,8 +653,6 @@ github.com/opencontainers/selinux v1.13.1 h1:A8nNeceYngH9Ow++M+VVEwJVpdFmrlxsN22
 github.com/opencontainers/selinux v1.13.1/go.mod h1:S10WXZ/osk2kWOYKy1x2f/eXF5ZHJoUs8UU/2caNRbg=
 github.com/openshift-eng/openshift-tests-extension v0.0.0-20260707142426-572a3e9deb7a h1:ulT0JZ/x6S4hYhyjUJ9T49YAxDLl1i5idFOMm9RHBkY=
 github.com/openshift-eng/openshift-tests-extension v0.0.0-20260707142426-572a3e9deb7a/go.mod h1:pHOS9c6BjZv91OkkHyIHAOWnYhxwcxWQkyYGEvPyUCE=
-github.com/openshift/api v0.0.0-20260724065811-356624ff036f h1:jGACG1DZvxDvRvH76Eh6SsXO1pVNsOqzMmvau1Oc4bc=
-github.com/openshift/api v0.0.0-20260724065811-356624ff036f/go.mod h1:k6qH5QOVa5GDln2VVm8Jz4NV3Z7R2SATHFLwGS6Wh3M=
 github.com/openshift/apiserver-library-go v0.0.0-20260715200723-42e5e402ca43 h1:V9hWaBi9cnohNk1F0Ph6wpI0otMWqMHleJ3oj5603Bc=
 github.com/openshift/apiserver-library-go v0.0.0-20260715200723-42e5e402ca43/go.mod h1:ZuzfEq1ccZpHNx05xEUKlm2TcMHt2iXVutb79kAuTfM=
 github.com/openshift/client-go v0.0.0-20260715172546-dac61734e0ec h1:UDjX+mot5IVLpcChyBqLXG1oSB29s4UkqFmgNb0Xsqc=
