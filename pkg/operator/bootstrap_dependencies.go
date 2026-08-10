@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	configv1 "github.com/openshift/api/config/v1"
 	mcfgv1alpha1 "github.com/openshift/api/machineconfiguration/v1alpha1"
@@ -305,10 +306,34 @@ func (b *BootstrapDependencies) fillBGPVIPConfig(path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read the BGPVIPConfig manifest: %w", err)
 	}
-	peersJSON, err := bgpVIPPeersJSONFromCR(cr, b.Infrastructure)
+	peersJSON, err := bgpVIPPeersJSONFromCR(cr, b.Infrastructure, bgpVIPFilePasswordResolver(filepath.Dir(path)))
 	if err != nil {
 		return err
 	}
 	b.BGPVIPPeersJSON = peersJSON
 	return nil
+}
+
+// bgpVIPFilePasswordResolver returns the bootstrap-time password resolver: a
+// passwordSecret reference named <name> is resolved from the
+// installer-generated Secret manifest bgp-vip-peer-secret-<name>.yaml sitting
+// in the same directory as the BGPVIPConfig CR manifest. A missing file is an
+// error: a referenced password must exist.
+func bgpVIPFilePasswordResolver(dir string) bgpVIPPasswordResolver {
+	return func(name string) (string, error) {
+		manifest := filepath.Join(dir, fmt.Sprintf("bgp-vip-peer-secret-%s.yaml", name))
+		secret, err := readCoreCR[*corev1.Secret](manifest)
+		if err != nil {
+			return "", fmt.Errorf("failed to read the BGP VIP password Secret manifest %s: %w", manifest, err)
+		}
+		// The stringData->data merge is API-server behavior; a manifest read
+		// straight from disk needs it done by hand.
+		for key, value := range secret.StringData {
+			if secret.Data == nil {
+				secret.Data = map[string][]byte{}
+			}
+			secret.Data[key] = []byte(value)
+		}
+		return bgpVIPPasswordFromSecret(secret)
+	}
 }

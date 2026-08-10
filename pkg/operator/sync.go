@@ -404,14 +404,68 @@ type bgpVIPPeersJSONConfig struct {
 	HostOverrides map[string][]bgpVIPPeerJSON `json:"hostOverrides,omitempty"`
 }
 
+// bgpVIPPasswordResolver resolves a BGPVIPPasswordSecret reference (a Secret
+// name in the openshift-config namespace) to the plaintext TCP MD5 password.
+// The plaintext ends up in the internal transport JSON's "password" field:
+// that contract is unchanged, runtimecfg needs plaintext for the node-local
+// 0600 peers file.
+type bgpVIPPasswordResolver func(name string) (string, error)
+
+// bgpVIPPasswordMaxBytes is the kernel's TCP MD5 password limit (RFC 2385,
+// TCP_MD5SIG_MAXKEYLEN).
+const bgpVIPPasswordMaxBytes = 80
+
+// bgpVIPPasswordFromSecret validates a resolved password Secret and extracts
+// the plaintext: type kubernetes.io/basic-auth, non-empty "password" key, at
+// most 80 bytes. Shared between the day-2 (API) and bootstrap (file)
+// resolvers.
+func bgpVIPPasswordFromSecret(secret *corev1.Secret) (string, error) {
+	if secret.Type != corev1.SecretTypeBasicAuth {
+		return "", fmt.Errorf("secret %q must be of type %q, got %q", secret.Name, corev1.SecretTypeBasicAuth, secret.Type)
+	}
+	password := secret.Data[corev1.BasicAuthPasswordKey]
+	if len(password) == 0 {
+		return "", fmt.Errorf("secret %q must carry a non-empty %q key", secret.Name, corev1.BasicAuthPasswordKey)
+	}
+	if len(password) > bgpVIPPasswordMaxBytes {
+		return "", fmt.Errorf("secret %q key %q exceeds the %d-byte TCP MD5 limit", secret.Name, corev1.BasicAuthPasswordKey, bgpVIPPasswordMaxBytes)
+	}
+	return string(password), nil
+}
+
+// resolveBGPVIPPasswordSecret is the day-2 resolver: a direct Get of the
+// referenced Secret from the openshift-config namespace (no Secret lister is
+// wired for openshift-config, and these reads happen only on BareMetal+BGP
+// syncs, so a live Get is the cheaper correct option).
+//
+// Note on rotation: the operator does not watch these Secrets. A rotated
+// password takes effect on the next sync (informer resync period or any
+// other event that retriggers the sync loop). This is intentional: wiring a
+// Secret informer for openshift-config just for this would be more machinery
+// than the rotation latency is worth.
+func (optr *Operator) resolveBGPVIPPasswordSecret(name string) (string, error) {
+	secret, err := optr.kubeClient.CoreV1().Secrets("openshift-config").Get(context.TODO(), name, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to read the BGP VIP password Secret openshift-config/%s: %w", name, err)
+	}
+	return bgpVIPPasswordFromSecret(secret)
+}
+
 // bgpVIPPeerToJSON maps one typed BGPVIPPeer to the Dev Preview wire form.
-// Omitted enums stay absent; zero timers stay absent.
-func bgpVIPPeerToJSON(peer mcfgv1alpha1.BGPVIPPeer) bgpVIPPeerJSON {
+// Omitted enums stay absent; zero timers stay absent. A passwordSecret
+// reference is resolved to plaintext via the supplied resolver.
+func bgpVIPPeerToJSON(peer mcfgv1alpha1.BGPVIPPeer, resolve bgpVIPPasswordResolver) (bgpVIPPeerJSON, error) {
 	out := bgpVIPPeerJSON{
 		PeerAddress: peer.PeerAddress,
 		PeerASN:     peer.PeerASN,
-		Password:    peer.Password,
 		Port:        peer.Port,
+	}
+	if peer.PasswordSecret.Name != "" {
+		password, err := resolve(peer.PasswordSecret.Name)
+		if err != nil {
+			return bgpVIPPeerJSON{}, fmt.Errorf("failed to resolve the password for peer %s: %w", peer.PeerAddress, err)
+		}
+		out.Password = password
 	}
 	switch peer.BFD {
 	case mcfgv1alpha1.BFDModeEnabled:
@@ -431,27 +485,37 @@ func bgpVIPPeerToJSON(peer mcfgv1alpha1.BGPVIPPeer) bgpVIPPeerJSON {
 	if peer.KeepaliveTimeSeconds != 0 {
 		out.KeepaliveTime = fmt.Sprintf("%ds", peer.KeepaliveTimeSeconds)
 	}
-	return out
+	return out, nil
 }
 
 // bgpVIPPeersJSONFromCR serializes a BGPVIPConfig CR plus the cluster VIPs
 // into the Dev Preview config.json payload, byte-compatible with what the
-// bgp-vip-config ConfigMap used to carry.
-func bgpVIPPeersJSONFromCR(cr *mcfgv1alpha1.BGPVIPConfig, infra *configv1.Infrastructure) (string, error) {
+// bgp-vip-config ConfigMap used to carry. passwordSecret references are
+// resolved to plaintext through resolve (API-backed day-2, file-backed at
+// bootstrap); a resolver failure fails the whole render.
+func bgpVIPPeersJSONFromCR(cr *mcfgv1alpha1.BGPVIPConfig, infra *configv1.Infrastructure, resolve bgpVIPPasswordResolver) (string, error) {
 	cfg := bgpVIPPeersJSONConfig{
 		LocalASN:    cr.Spec.LocalASN,
 		Communities: cr.Spec.Communities,
 	}
 	cfg.DefaultPeers = make([]bgpVIPPeerJSON, 0, len(cr.Spec.DefaultPeers))
 	for _, peer := range cr.Spec.DefaultPeers {
-		cfg.DefaultPeers = append(cfg.DefaultPeers, bgpVIPPeerToJSON(peer))
+		out, err := bgpVIPPeerToJSON(peer, resolve)
+		if err != nil {
+			return "", err
+		}
+		cfg.DefaultPeers = append(cfg.DefaultPeers, out)
 	}
 	if len(cr.Spec.HostOverrides) > 0 {
 		cfg.HostOverrides = make(map[string][]bgpVIPPeerJSON, len(cr.Spec.HostOverrides))
 		for _, override := range cr.Spec.HostOverrides {
 			peers := make([]bgpVIPPeerJSON, 0, len(override.Peers))
 			for _, peer := range override.Peers {
-				peers = append(peers, bgpVIPPeerToJSON(peer))
+				out, err := bgpVIPPeerToJSON(peer, resolve)
+				if err != nil {
+					return "", err
+				}
+				peers = append(peers, out)
 			}
 			cfg.HostOverrides[override.Hostname] = peers
 		}
@@ -492,7 +556,7 @@ func (optr *Operator) syncBGPVIPPeersJSON(spec *mcfgv1.ControllerConfigSpec, inf
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.UnstructuredContent(), cr); err != nil {
 		return fmt.Errorf("failed to decode the BGPVIPConfig 'cluster' resource: %w", err)
 	}
-	peersJSON, err := bgpVIPPeersJSONFromCR(cr, infra)
+	peersJSON, err := bgpVIPPeersJSONFromCR(cr, infra, optr.resolveBGPVIPPasswordSecret)
 	if err != nil {
 		if statusErr := optr.applyBGPVIPConfigRenderedStatus(cr, err); statusErr != nil {
 			klog.Errorf("Failed to update BGPVIPConfig status: %v", statusErr)

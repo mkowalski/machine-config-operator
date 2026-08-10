@@ -205,6 +205,76 @@ spec:
 	assert.Empty(t, deps4.BGPVIPPeersJSON, "expected empty for malformed manifest")
 }
 
+// TestFillBGPVIPConfigPasswordSecret locks the bootstrap file-based password
+// resolver: a peer's passwordSecret reference is resolved from the
+// installer-copied Secret manifest bgp-vip-peer-secret-<name>.yaml sitting
+// next to the CR manifest.
+func TestFillBGPVIPConfigPasswordSecret(t *testing.T) {
+	crYAML := `apiVersion: machineconfiguration.openshift.io/v1alpha1
+kind: BGPVIPConfig
+metadata:
+  name: cluster
+spec:
+  localASN: 64512
+  defaultPeers:
+  - peerAddress: 192.168.111.1
+    peerASN: 64513
+    passwordSecret:
+      name: bgp-peer-pw
+`
+	secretYAML := `apiVersion: v1
+kind: Secret
+metadata:
+  name: bgp-peer-pw
+  namespace: openshift-config
+type: kubernetes.io/basic-auth
+stringData:
+  password: s3cret
+`
+	infra := &configv1.Infrastructure{
+		Status: configv1.InfrastructureStatus{
+			PlatformStatus: &configv1.PlatformStatus{
+				Type: configv1.BareMetalPlatformType,
+				BareMetal: &configv1.BareMetalPlatformStatus{
+					APIServerInternalIPs: []string{"192.168.111.5"},
+					IngressIPs:           []string{"192.168.111.4"},
+				},
+			},
+		},
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bgp-vip-config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(crYAML), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bgp-vip-peer-secret-bgp-peer-pw.yaml"), []byte(secretYAML), 0o644))
+
+	deps := &BootstrapDependencies{Infrastructure: infra}
+	require.NoError(t, deps.fillBGPVIPConfig(path), "fillBGPVIPConfig")
+	assert.Equal(t,
+		`{"localASN":64512,"defaultPeers":[{"peerAddress":"192.168.111.1","peerASN":64513,"password":"s3cret"}],"apiVIPs":["192.168.111.5"],"ingressVIPs":["192.168.111.4"]}`,
+		deps.BGPVIPPeersJSON, "the resolved plaintext must land in the JSON password field")
+
+	// A referenced Secret whose manifest file is missing must error.
+	dir2 := t.TempDir()
+	path2 := filepath.Join(dir2, "bgp-vip-config.yaml")
+	require.NoError(t, os.WriteFile(path2, []byte(crYAML), 0o644))
+	deps2 := &BootstrapDependencies{Infrastructure: infra}
+	err := deps2.fillBGPVIPConfig(path2)
+	require.Error(t, err, "missing Secret manifest must error")
+	assert.Contains(t, err.Error(), "bgp-vip-peer-secret-bgp-peer-pw.yaml")
+	assert.Empty(t, deps2.BGPVIPPeersJSON)
+
+	// A Secret of the wrong type must be rejected.
+	dir3 := t.TempDir()
+	path3 := filepath.Join(dir3, "bgp-vip-config.yaml")
+	require.NoError(t, os.WriteFile(path3, []byte(crYAML), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir3, "bgp-vip-peer-secret-bgp-peer-pw.yaml"),
+		[]byte("apiVersion: v1\nkind: Secret\nmetadata:\n  name: bgp-peer-pw\ntype: Opaque\nstringData:\n  password: s3cret\n"), 0o644))
+	deps3 := &BootstrapDependencies{Infrastructure: infra}
+	assert.Error(t, deps3.fillBGPVIPConfig(path3), "non-basic-auth Secret must error")
+	assert.Empty(t, deps3.BGPVIPPeersJSON)
+}
+
 // TestBuildSpecBGPImageValidation locks the bootstrap hard-fail: rendering a
 // BGP VIP management cluster without the frr-k8s/kube-vip images must error
 // at render time rather than emit static pod manifests with empty images.
