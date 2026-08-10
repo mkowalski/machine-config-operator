@@ -470,4 +470,4 @@ replace (
 	k8s.io/streaming => github.com/openshift/kubernetes/staging/src/k8s.io/streaming v0.0.0-20260716191900-78acd4d422b2
 )
 
-replace github.com/openshift/api => github.com/mkowalski/openshift-api v0.0.0-20260807131454-15e15a151453
+replace github.com/openshift/api => github.com/mkowalski/openshift-api v0.0.0-20260810095151-60218f9099d8
